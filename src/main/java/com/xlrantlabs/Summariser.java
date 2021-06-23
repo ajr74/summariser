@@ -1,6 +1,7 @@
 package com.xlrantlabs;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.*;
 import edu.stanford.nlp.ling.CoreAnnotations;
 import edu.stanford.nlp.pipeline.Annotation;
@@ -10,20 +11,28 @@ import edu.stanford.nlp.util.CoreMap;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * A syntactic summariser.
+ */
 public class Summariser
 {
     //////////////////////////////////////////////////
     // Fields
 
     /**
-     * The boost to apply to sentences within the first paragraph of the document.
+     * The boost factor to apply to sentences within the first paragraph of the document.
      */
     private static final float FIRST_PARAGRAPH_BOOST = 1.5f;
 
     /**
-     * The boost to apply to the first sentence within a paragraph.
+     * The boost factor to apply to the first sentence within a paragraph.
      */
     private static final float FIRST_SENTENCE_BOOST = 1.25f;
+
+    /**
+     * The paragraph separator.
+     */
+    private static final String NEW_PARA_SEP = "\n\n";
 
     /**
      * The raw text to summarise.
@@ -38,7 +47,7 @@ public class Summariser
     /**
      * The text sentences.
      */
-    private final Collection<Sentence> sentences = Lists.newArrayList();
+    private final List<Sentence> sentences = Lists.newArrayList();
 
     /**
      * The text summary.
@@ -53,19 +62,48 @@ public class Summariser
      *
      * @param text the text to summariser.
      * @param limit the maximum number of sentences to return.
-     * @return the summarised text.
      */
-    public String summarise(String text, int limit)
+    public void summarise(String text, int limit)
     {
         this.text = text;
         this.limit = limit;
         sentences.clear();
+        summary = "";
 
         extractSentences();
         scoreSentences();
         assembleSummary();
+    }
 
+    /**
+     * Gets the text summary.
+     *
+     * @return the text summary.
+     */
+    public String getSummary()
+    {
         return summary;
+    }
+
+    /**
+     * Gets the number of paragraphs summarised.
+     *
+     * @return the number of paragraphs summarised.
+     */
+    public int getNumParagraphs()
+    {
+        int numSentences = sentences.size();
+        return numSentences == 0 ? 0 : sentences.get(numSentences - 1).getParagraphPositionWithinDoc() + 1;
+    }
+
+    /**
+     * Gets the number of sentences summarised.
+     *
+     * @return the number of sentences summarised.
+     */
+    public int getNumSentences()
+    {
+        return sentences.size();
     }
 
     /**
@@ -74,7 +112,7 @@ public class Summariser
     private void extractSentences()
     {
         Properties props = new Properties();
-        props.put("annotators", "tokenize, ssplit");
+        props.put("annotators", "tokenize, ssplit");  // can add more here for trickier scoring: parts of speech, named entities, etc
         StanfordCoreNLP pipeline = new StanfordCoreNLP(props);
         Annotation document = new Annotation(text);
         pipeline.annotate(document);
@@ -84,7 +122,7 @@ public class Summariser
         for (CoreMap sentence : document.get(CoreAnnotations.SentencesAnnotation.class))
         {
             int sentenceOffsetStart = sentence.get(CoreAnnotations.CharacterOffsetBeginAnnotation.class);
-            if (sentenceOffsetStart > 1 && text.startsWith("\n\n", sentenceOffsetStart - 2) && !sentences.isEmpty())
+            if (sentenceOffsetStart > 1 && text.startsWith(NEW_PARA_SEP, sentenceOffsetStart - NEW_PARA_SEP.length()) && !sentences.isEmpty())
             {
                 paragraphPositionWithinDoc++;
                 positionWithinParagraph = 0;
@@ -94,13 +132,20 @@ public class Summariser
     }
 
     /**
-     * Scores the sentences based on token frequencies and sentence position information.
+     * Scores the sentences. The implementation here is a simple one, based on rules mentioned by the author of an old
+     * iPhone app called "Summly" (no longer available). In general sentences containing high-frequency words are good.
+     * Sentences in the first paragraph should be scored higher, as often a lot of summary information is in the first
+     * paragraph. The first sentences in each paragraph should be scored higher, too.
+     *
+     * CoreNLP lets one annotate tokens with parts-of-speech (noun, verb, adjective, etc) and named entity info. Such
+     * annotations could be used to enhance the scorer below.
      */
     private void scoreSentences()
     {
         Multiset<String> documentTokenHistogram = HashMultiset.create();
         sentences.forEach(sentence -> documentTokenHistogram.addAll(sentence.getValuableTokens()));
         long numTotalTokens = documentTokenHistogram.entrySet().stream().map(Multiset.Entry::getCount).count();
+        Preconditions.checkArgument(numTotalTokens > 0L, "No tokens in the supplied text");
 
         sentences.forEach(sentence -> {
             float score = sentence.getValuableTokens()
@@ -126,11 +171,13 @@ public class Summariser
      */
     private void assembleSummary()
     {
+        // First get the top scoring sentences
         Collection<Sentence> highestScoringSentences = sentences.stream()
                 .sorted((s1, s2) -> Float.compare(s2.getScore(), s1.getScore()))
                 .limit(limit)
                 .collect(Collectors.toList());
 
+        // The rearrange the top scoring sentences, so that they can joined in presentation order.
         Iterable<String> reorderedResults = highestScoringSentences.stream()
                 .sorted((s1, s2) -> {
                     int paragraphCompare = Integer.compare(s1.getParagraphPositionWithinDoc(), s2.getParagraphPositionWithinDoc());
@@ -141,6 +188,8 @@ public class Summariser
                     return paragraphCompare;
                 })
                 .map(Sentence::getRawText)
+                .map(String::trim)
+                .map(sentence -> sentence.replaceAll("\\R+", " "))
                 .collect(Collectors.toList());
 
         summary = Joiner.on(' ').join(reorderedResults);
