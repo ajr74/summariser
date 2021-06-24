@@ -171,13 +171,13 @@ public class Summariser
      */
     private void assembleSummary()
     {
-        // First get the top scoring sentences
+        // First, get the top scoring sentences.
         Collection<Sentence> highestScoringSentences = sentences.stream()
                 .sorted((s1, s2) -> Float.compare(s2.getScore(), s1.getScore()))
                 .limit(limit)
                 .collect(Collectors.toList());
 
-        // The rearrange the top scoring sentences, so that they can joined in presentation order.
+        // Then rearrange the top scoring sentences, so that they can be joined in presentation order.
         Iterable<String> reorderedResults = highestScoringSentences.stream()
                 .sorted((s1, s2) -> {
                     int paragraphCompare = Integer.compare(s1.getParagraphPositionWithinDoc(), s2.getParagraphPositionWithinDoc());
