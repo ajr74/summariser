@@ -21,4 +21,4 @@ And if you want some elementary document stats:
     int numParagraphs = summariser.getNumParagraphs();
     int numSentences = summariser.getNumSentences();
 
-(c) 2024
+(c) 2024 -
